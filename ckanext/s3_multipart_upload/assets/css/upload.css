@@ -1,0 +1,41 @@
+.s3-multipart-upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: -20px 0 1.5em;
+}
+
+.s3-multipart-upload-progress-track {
+  flex: 1 1 auto;
+  height: 0.9em;
+  background-color: #e9ecef;
+  border-radius: 0.25em;
+  overflow: hidden;
+}
+
+.s3-multipart-upload-bar {
+  height: 100%;
+  width: 0%;
+  background-color: #0d6efd;
+}
+
+.s3-multipart-upload-progress.is-complete .s3-multipart-upload-bar {
+  background-color: #198754;
+}
+
+.s3-multipart-upload-progress .s3-multipart-upload-status {
+  flex: 0 0 auto;
+  font-size: 0.9em;
+  color: #555;
+  white-space: nowrap;
+}
+
+.s3-multipart-upload-progress.is-complete .s3-multipart-upload-status {
+  color: #198754;
+  font-weight: 600;
+}
+
+.s3-multipart-upload-error {
+  margin: -20px 0 1.5em;
+}
+

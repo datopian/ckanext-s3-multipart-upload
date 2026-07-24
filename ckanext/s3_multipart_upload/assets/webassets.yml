@@ -1,0 +1,12 @@
+upload_css:
+  output: s3_multipart_upload/%(version)s_upload.css
+  contents:
+    - css/upload.css
+
+upload:
+  output: s3_multipart_upload/%(version)s_upload.js
+  extra:
+    preload:
+      - base/main
+  contents:
+    - js/upload.js

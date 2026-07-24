@@ -1,0 +1,35 @@
+{% ckan_extends %}
+
+{#
+Adds direct-to-S3 multipart upload on top of the native upload/link/clear
+widget rendered by package/snippets/resource_upload_field.html (untouched,
+via {{ super() }} below). Only this block is overridden so other extensions
+overriding different blocks of this same template (e.g. ckanext-spatialdata's
+`metadata_fields` block) compose correctly regardless of ckan.plugins order.
+#}
+{% block basic_fields_url %}
+  {{ super() }}
+  {% if h.uploads_enabled() %}
+    {% asset 's3_multipart_upload/upload_css' %}
+    {% asset 's3_multipart_upload/upload' %}
+    {% set settings = h.s3_multipart_upload_settings() %}
+    <div class="s3-multipart-upload"
+      data-module="s3-multipart-upload"
+      data-module-start_url="{{ h.url_for('s3_multipart_upload.start_multipart_upload', id=pkg_name) }}"
+      data-module-sign_part_url="{{ h.url_for('s3_multipart_upload.sign_part', id=pkg_name) }}"
+      data-module-complete_url="{{ h.url_for('s3_multipart_upload.complete_multipart_upload', id=pkg_name) }}"
+      data-module-abort_url="{{ h.url_for('s3_multipart_upload.abort_multipart_upload', id=pkg_name) }}"
+      data-module-mode="{{ 'update' if data.id else 'create' }}"
+      data-module-part_size_mb="{{ settings.part_size_mb }}"
+      data-module-max_file_size_mb="{{ settings.max_file_size_mb }}">
+      <div class="s3-multipart-upload-progress" style="display:none;">
+        <div class="s3-multipart-upload-progress-track">
+          <div class="s3-multipart-upload-bar" style="width:0%"></div>
+        </div>
+        <span class="s3-multipart-upload-status"></span>
+        <button type="button" class="btn btn-danger btn-sm s3-multipart-upload-cancel">{{ _('Cancel') }}</button>
+      </div>
+      <div class="s3-multipart-upload-error error-inline" style="display:none;"></div>
+    </div>
+  {% endif %}
+{% endblock %}

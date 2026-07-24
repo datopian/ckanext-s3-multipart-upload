@@ -1,0 +1,2 @@
+include README.md
+recursive-include ckanext/s3_multipart_upload *.html *.json *.js *.css *.yml *.yaml *.po *.pot *.mo

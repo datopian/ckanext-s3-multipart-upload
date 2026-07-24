@@ -1,0 +1,16 @@
+{
+  "name": "ckanext-s3-multipart-upload-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Build source for the s3-multipart-upload CKAN module bundle",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@uppy/core": "^4.4.4",
+    "@uppy/aws-s3": "^4.3.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  }
+}

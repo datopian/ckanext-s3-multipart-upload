@@ -1,0 +1,57 @@
+{#
+Full override (not {% ckan_extends %}) of ckanext-scheming's
+scheming/form_snippets/upload.html, which is a flat snippet with no named
+blocks to hook into via `{{ super() }}`.
+
+ckanext-scheming's resource_form.html redefines the whole `basic_fields`
+block per schema field, so package/snippets/resource_form.html's
+`basic_fields_url` block (where this extension's widget is normally added)
+is never reached for scheming-driven dataset types (see
+ckanext-malmo's malmo_dataset_schema.yaml, whose resource `url` field uses
+the `resource_url_upload` preset -> this template). This copies the
+original template's `form.image_upload` call verbatim and appends the same
+multipart-upload widget markup used in the non-scheming path.
+#}
+{% import 'macros/form.html' as form %}
+
+{%- set is_upload = (data.url_type == 'upload') -%}
+{{ form.image_upload(
+    data,
+    errors,
+    field_url=field.field_name,
+    field_upload=field.upload_field,
+    field_clear=field.upload_clear,
+    is_upload_enabled=h.uploads_enabled(),
+    is_url=data[field.field_name] and not is_upload,
+    is_upload=is_upload,
+    upload_label=h.scheming_language_text(field.upload_label),
+    url_label=h.scheming_language_text(field.label),
+    placeholder=field.form_placeholder
+    )
+}}
+{# image_upload macro doesn't support call #}
+{%- snippet 'scheming/form_snippets/help_text.html', field=field -%}
+
+{% if h.uploads_enabled() %}
+  {% asset 's3_multipart_upload/upload_css' %}
+  {% asset 's3_multipart_upload/upload' %}
+  {% set settings = h.s3_multipart_upload_settings() %}
+  <div class="s3-multipart-upload"
+    data-module="s3-multipart-upload"
+    data-module-start_url="{{ h.url_for('s3_multipart_upload.start_multipart_upload', id=package_id) }}"
+    data-module-sign_part_url="{{ h.url_for('s3_multipart_upload.sign_part', id=package_id) }}"
+    data-module-complete_url="{{ h.url_for('s3_multipart_upload.complete_multipart_upload', id=package_id) }}"
+    data-module-abort_url="{{ h.url_for('s3_multipart_upload.abort_multipart_upload', id=package_id) }}"
+    data-module-mode="{{ 'update' if data.id else 'create' }}"
+    data-module-part_size_mb="{{ settings.part_size_mb }}"
+    data-module-max_file_size_mb="{{ settings.max_file_size_mb }}">
+    <div class="s3-multipart-upload-progress" style="display:none;">
+      <div class="s3-multipart-upload-progress-track">
+        <div class="s3-multipart-upload-bar" style="width:0%"></div>
+      </div>
+      <span class="s3-multipart-upload-status"></span>
+      <button type="button" class="btn btn-danger btn-sm s3-multipart-upload-cancel">{{ _('Cancel') }}</button>
+    </div>
+    <div class="s3-multipart-upload-error error-inline" style="display:none;"></div>
+  </div>
+{% endif %}
