@@ -1,5 +1,6 @@
 # encoding: utf-8
 import logging
+import os
 import uuid
 
 import flask
@@ -17,6 +18,22 @@ log = logging.getLogger(__name__)
 NotFound = logic.NotFound
 NotAuthorized = logic.NotAuthorized
 ValidationError = logic.ValidationError
+
+
+def _guess_format(filename):
+    """Same extension-based format guess as ckanext-s3filestore's own
+    S3ResourceUploader (the classic upload path this extension sits
+    alongside) - not a new heuristic, the one already established in this
+    codebase for this exact purpose.
+
+    The placeholder resource created below is the *first* resource row
+    that exists for this upload, so it's the first thing IResourceController
+    hooks (e.g. ckanext-xloader) see - without this, they'd see an empty
+    format and skip, before the classic form submit ever gets a chance to
+    set a real one.
+    """
+    resource_format = os.path.splitext(filename)[1][1:]
+    return resource_format or None
 
 # S3 hard limit: a multipart upload may have at most 10,000 parts.
 MAX_PART_NUMBER = 10000
@@ -137,8 +154,19 @@ def start_multipart_upload(package_type, id):
         Bucket=uploader.bucket_name,
         Key=key,
         ContentType=content_type,
-        ACL=uploader.acl,
     )
+    # Deliberately not sending ACL=<uploader.acl> (defaults to
+    # 'public-read' in ckanext-s3filestore) here. Downloads always go
+    # through get_signed_url_to_key's authenticated presigned URLs, never
+    # a bare public object URL, so an object ACL was never functionally
+    # necessary. On a bucket with public access disabled at the
+    # bucket/account level (e.g. Cloudflare R2's "Public Access: Disabled"),
+    # requesting `public-read` on CompleteMultipartUpload doesn't raise an
+    # error - it silently completes but the object doesn't durably persist,
+    # which is a much nastier failure mode than an upfront rejection would
+    # be. Simplest fix: don't ask for a permission the object doesn't need
+    # and the bucket isn't configured to grant.
+
     # Tagging on CreateMultipartUpload only powers the *optional*
     # pending-upload lifecycle cleanup described in the README - not the
     # upload itself - and not every S3-compatible backend implements it
@@ -288,15 +316,19 @@ def complete_multipart_upload(package_type, id):
         # submits the form, the row already exists, so CKAN's view calls
         # resource_update instead - which is exactly right, and folds in
         # whatever name/format/etc. the user filled in by then.
+        placeholder_data = {
+            u'package_id': package_id,
+            u'id': resource_id,
+            u'url': munged_filename,
+            u'url_type': u'upload',
+            u'size': size,
+            u'mimetype': mimetype,
+        }
+        resource_format = _guess_format(munged_filename)
+        if resource_format:
+            placeholder_data[u'format'] = resource_format
         try:
-            toolkit.get_action(u'resource_create')(_get_context(), {
-                u'package_id': package_id,
-                u'id': resource_id,
-                u'url': munged_filename,
-                u'url_type': u'upload',
-                u'size': size,
-                u'mimetype': mimetype,
-            })
+            toolkit.get_action(u'resource_create')(_get_context(), placeholder_data)
         except ValidationError as e:
             log.warning(
                 u'Failed to create placeholder resource %s: %s',
