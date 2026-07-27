@@ -133,34 +133,38 @@ def start_multipart_upload(package_type, id):
     key, munged_filename = uploader.resource_key(resource_id, filename)
 
     client = uploader.get_s3_client()
+    create_kwargs = dict(
+        Bucket=uploader.bucket_name,
+        Key=key,
+        ContentType=content_type,
+        ACL=uploader.acl,
+    )
+    # Tagging on CreateMultipartUpload only powers the *optional*
+    # pending-upload lifecycle cleanup described in the README - not the
+    # upload itself - and not every S3-compatible backend implements it
+    # (Cloudflare R2 returns NotImplemented for the x-amz-tagging header
+    # here, while AWS S3 and MinIO accept it). Once a backend is known not
+    # to support it, don't send it again - see MultipartUploader.
+    # tagging_supported's docstring for why this is process-lifetime, not
+    # per-request.
+    if MultipartUploader.tagging_supported:
+        create_kwargs[u'Tagging'] = u'ckan-status=pending'
+
     try:
-        response = client.create_multipart_upload(
-            Bucket=uploader.bucket_name,
-            Key=key,
-            ContentType=content_type,
-            ACL=uploader.acl,
-            Tagging=u'ckan-status=pending',
-        )
+        response = client.create_multipart_upload(**create_kwargs)
     except ClientError as e:
-        # Tagging on CreateMultipartUpload only powers the *optional*
-        # pending-upload lifecycle cleanup described in the README - not
-        # the upload itself - and not every S3-compatible backend
-        # implements it (e.g. Cloudflare R2 returns NotImplemented for the
-        # x-amz-tagging header here, while AWS S3 and MinIO accept it).
-        # Degrade gracefully instead of hard-requiring it everywhere.
-        if e.response.get(u'Error', {}).get(u'Code') == u'NotImplemented':
+        if (MultipartUploader.tagging_supported and
+                e.response.get(u'Error', {}).get(u'Code') == u'NotImplemented'):
             log.info(
                 u'Backend does not support tagging on '
-                u'CreateMultipartUpload; retrying %s without it. '
+                u'CreateMultipartUpload; retrying %s without it, and '
+                u'disabling tagging for the rest of this process. '
                 u'Pending-upload S3 lifecycle cleanup will not apply to '
                 u'this object.', key)
+            MultipartUploader.tagging_supported = False
+            create_kwargs.pop(u'Tagging', None)
             try:
-                response = client.create_multipart_upload(
-                    Bucket=uploader.bucket_name,
-                    Key=key,
-                    ContentType=content_type,
-                    ACL=uploader.acl,
-                )
+                response = client.create_multipart_upload(**create_kwargs)
             except ClientError as e2:
                 log.warning(
                     u'Failed to create multipart upload for %s: %s',

@@ -14,6 +14,18 @@ class MultipartUploader(BaseS3Uploader):
     classes.
     """
 
+    # Whether this backend accepts object tagging at all (both setting it
+    # via CreateMultipartUpload's `Tagging` param, and clearing it later via
+    # DeleteObjectTagging). Some S3-compatible backends (Cloudflare R2)
+    # return NotImplemented for tagging on CreateMultipartUpload - see
+    # start_multipart_upload's retry logic in blueprint.py, which flips this
+    # to False the first time that happens. Shared at the class level (not
+    # per-request) so that once a backend is known not to support it, we
+    # stop attempting *any* further tagging call against it for the life of
+    # the process, rather than repeatedly probing an unsupported/
+    # under-tested code path on every subsequent upload.
+    tagging_supported = True
+
     def __init__(self):
         super(MultipartUploader, self).__init__()
         path = config.get('ckanext.s3filestore.aws_storage_path', '')

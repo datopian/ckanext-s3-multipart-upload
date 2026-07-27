@@ -67,6 +67,14 @@ class S3MultipartUploadPlugin(plugins.SingletonPlugin):
         """
         if resource.get('url_type') != 'upload' or not resource.get('url'):
             return
+        if not MultipartUploader.tagging_supported:
+            # The object was never tagged in the first place (this backend
+            # doesn't support it - see start_multipart_upload's retry
+            # logic), so there's nothing to clear. Don't make an
+            # unnecessary tagging call against a backend whose tagging
+            # support is already known to be incomplete - untested/risky
+            # territory best avoided rather than probed on every upload.
+            return
         try:
             uploader = MultipartUploader()
             filename = os.path.basename(resource['url'])
