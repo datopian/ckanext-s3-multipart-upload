@@ -132,8 +132,9 @@ def start_multipart_upload(package_type, id):
     uploader = MultipartUploader()
     key, munged_filename = uploader.resource_key(resource_id, filename)
 
+    client = uploader.get_s3_client()
     try:
-        response = uploader.get_s3_client().create_multipart_upload(
+        response = client.create_multipart_upload(
             Bucket=uploader.bucket_name,
             Key=key,
             ContentType=content_type,
@@ -141,8 +142,33 @@ def start_multipart_upload(package_type, id):
             Tagging=u'ckan-status=pending',
         )
     except ClientError as e:
-        log.warning(u'Failed to create multipart upload for %s: %s', key, e)
-        toolkit.abort(502, toolkit._(u'Failed to start upload'))
+        # Tagging on CreateMultipartUpload only powers the *optional*
+        # pending-upload lifecycle cleanup described in the README - not
+        # the upload itself - and not every S3-compatible backend
+        # implements it (e.g. Cloudflare R2 returns NotImplemented for the
+        # x-amz-tagging header here, while AWS S3 and MinIO accept it).
+        # Degrade gracefully instead of hard-requiring it everywhere.
+        if e.response.get(u'Error', {}).get(u'Code') == u'NotImplemented':
+            log.info(
+                u'Backend does not support tagging on '
+                u'CreateMultipartUpload; retrying %s without it. '
+                u'Pending-upload S3 lifecycle cleanup will not apply to '
+                u'this object.', key)
+            try:
+                response = client.create_multipart_upload(
+                    Bucket=uploader.bucket_name,
+                    Key=key,
+                    ContentType=content_type,
+                    ACL=uploader.acl,
+                )
+            except ClientError as e2:
+                log.warning(
+                    u'Failed to create multipart upload for %s: %s',
+                    key, e2)
+                toolkit.abort(502, toolkit._(u'Failed to start upload'))
+        else:
+            log.warning(u'Failed to create multipart upload for %s: %s', key, e)
+            toolkit.abort(502, toolkit._(u'Failed to start upload'))
 
     return flask.jsonify({
         u'uploadId': response[u'UploadId'],
