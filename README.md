@@ -123,10 +123,7 @@ grants:
         "s3:UploadPart",
         "s3:CompleteMultipartUpload",
         "s3:AbortMultipartUpload",
-        "s3:ListMultipartUploadParts",
-        "s3:PutObjectTagging",
-        "s3:GetObjectTagging",
-        "s3:DeleteObjectTagging"
+        "s3:ListMultipartUploadParts"
       ],
       "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME/*"
     }
@@ -156,17 +153,9 @@ response body.
 
 ### 3. Lifecycle rules (orphan cleanup)
 
-Two independent problems, two rules:
-
 - **Abandoned mid-upload** (tab closed before all parts finished): use S3's
   native `AbortIncompleteMultipartUpload` lifecycle action. Needs no
   application code or extra IAM permissions — S3 does this itself.
-- **Finished uploading, but the CKAN form was never saved**: every object
-  this extension creates is tagged `ckan-status=pending` at
-  `CreateMultipartUpload` time, and only has that tag cleared once a real
-  CKAN resource row is saved pointing at it (`after_resource_create` /
-  `after_resource_update`). A tag-filtered expiration rule cleans up
-  anything left in that state.
 
 ```json
 {
@@ -176,16 +165,17 @@ Two independent problems, two rules:
       "Status": "Enabled",
       "Filter": {"Prefix": ""},
       "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
-    },
-    {
-      "ID": "expire-unconfirmed-uploads",
-      "Status": "Enabled",
-      "Filter": {"Tag": {"Key": "ckan-status", "Value": "pending"}},
-      "Expiration": {"Days": 3}
     }
   ]
 }
 ```
+
+There used to be a second rule + a `ckan-status=pending` tagging mechanism
+for uploads whose form was never saved. **Removed** — on Cloudflare R2,
+`DeleteObjectTagging` returns a deceptive `204` but actually deletes the
+object outright, tagged or not, which was silently destroying newly
+uploaded files. Confirmed by reproduction. Not needed for cleanup anyway;
+the lifecycle rule above already handles orphans.
 
 ## Known limitations
 

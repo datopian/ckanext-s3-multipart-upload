@@ -21,17 +21,7 @@ ValidationError = logic.ValidationError
 
 
 def _guess_format(filename):
-    """Same extension-based format guess as ckanext-s3filestore's own
-    S3ResourceUploader (the classic upload path this extension sits
-    alongside) - not a new heuristic, the one already established in this
-    codebase for this exact purpose.
-
-    The placeholder resource created below is the *first* resource row
-    that exists for this upload, so it's the first thing IResourceController
-    hooks (e.g. ckanext-xloader) see - without this, they'd see an empty
-    format and skip, before the classic form submit ever gets a chance to
-    set a real one.
-    """
+    """Extension-based format guess, same as S3ResourceUploader's."""
     resource_format = os.path.splitext(filename)[1][1:]
     return resource_format or None
 
@@ -68,14 +58,7 @@ def _is_valid_uuid(value):
 
 
 def _authorize(id, resource_id, mode):
-    """Authorize the request against the dataset (and, for updates, the
-    resource). `id` is the package id/name from the URL. Returns the
-    package id.
-
-    Aborts the request (403/404) if the caller isn't allowed to add/edit a
-    resource on this dataset, or if a `mode=update` resource_id doesn't
-    actually belong to this dataset.
-    """
+    """Authorize against the dataset/resource. Returns the package id."""
     if not _is_valid_uuid(resource_id):
         toolkit.abort(400, toolkit._(u'resource_id must be a UUID'))
 
@@ -122,12 +105,7 @@ def _get_json_body():
 
 
 def _expected_key_or_abort(uploader, resource_id, filename, key):
-    """Recompute the key server-side from (resource_id, filename) and
-    require it match exactly what the client sent. Defense in depth: a
-    resource_id passing `_authorize` only proves the caller may act on that
-    resource, not that an arbitrary client-supplied `key` is the one that
-    belongs to it.
-    """
+    """Recompute the key server-side and require it matches the client's."""
     expected_key, munged_filename = uploader.resource_key(resource_id, filename)
     if key != expected_key:
         toolkit.abort(400, toolkit._(u'key does not match resource_id/filename'))
@@ -155,52 +133,14 @@ def start_multipart_upload(package_type, id):
         Key=key,
         ContentType=content_type,
     )
-    # Deliberately not sending ACL=<uploader.acl> (defaults to
-    # 'public-read' in ckanext-s3filestore) here. Downloads always go
-    # through get_signed_url_to_key's authenticated presigned URLs, never
-    # a bare public object URL, so an object ACL was never functionally
-    # necessary. On a bucket with public access disabled at the
-    # bucket/account level (e.g. Cloudflare R2's "Public Access: Disabled"),
-    # requesting `public-read` on CompleteMultipartUpload doesn't raise an
-    # error - it silently completes but the object doesn't durably persist,
-    # which is a much nastier failure mode than an upfront rejection would
-    # be. Simplest fix: don't ask for a permission the object doesn't need
-    # and the bucket isn't configured to grant.
-
-    # Tagging on CreateMultipartUpload only powers the *optional*
-    # pending-upload lifecycle cleanup described in the README - not the
-    # upload itself - and not every S3-compatible backend implements it
-    # (Cloudflare R2 returns NotImplemented for the x-amz-tagging header
-    # here, while AWS S3 and MinIO accept it). Once a backend is known not
-    # to support it, don't send it again - see MultipartUploader.
-    # tagging_supported's docstring for why this is process-lifetime, not
-    # per-request.
-    if MultipartUploader.tagging_supported:
-        create_kwargs[u'Tagging'] = u'ckan-status=pending'
-
+    # No ACL (downloads use signed URLs). No Tagging - DeleteObjectTagging
+    # deletes objects outright on R2, see README. Orphans are cleaned up by
+    # the bucket's AbortIncompleteMultipartUpload lifecycle rule instead.
     try:
         response = client.create_multipart_upload(**create_kwargs)
     except ClientError as e:
-        if (MultipartUploader.tagging_supported and
-                e.response.get(u'Error', {}).get(u'Code') == u'NotImplemented'):
-            log.info(
-                u'Backend does not support tagging on '
-                u'CreateMultipartUpload; retrying %s without it, and '
-                u'disabling tagging for the rest of this process. '
-                u'Pending-upload S3 lifecycle cleanup will not apply to '
-                u'this object.', key)
-            MultipartUploader.tagging_supported = False
-            create_kwargs.pop(u'Tagging', None)
-            try:
-                response = client.create_multipart_upload(**create_kwargs)
-            except ClientError as e2:
-                log.warning(
-                    u'Failed to create multipart upload for %s: %s',
-                    key, e2)
-                toolkit.abort(502, toolkit._(u'Failed to start upload'))
-        else:
-            log.warning(u'Failed to create multipart upload for %s: %s', key, e)
-            toolkit.abort(502, toolkit._(u'Failed to start upload'))
+        log.warning(u'Failed to create multipart upload for %s: %s', key, e)
+        toolkit.abort(502, toolkit._(u'Failed to start upload'))
 
     return flask.jsonify({
         u'uploadId': response[u'UploadId'],
@@ -300,22 +240,9 @@ def complete_multipart_upload(package_type, id):
         log.warning(u'Failed to head_object after completing %s: %s', key, e)
 
     if mode == u'create':
-        # CKAN's own resource "new" view (ckan/views/resource.py
-        # CreateView.post) decides resource_create vs resource_update
-        # purely by whether the form's `id` field is populated - and we
-        # have to populate it up front so the browser knows the S3 key
-        # before any resource row exists (see README's "client-supplied
-        # UUID" section). That means that by the time the classic form is
-        # eventually submitted, CKAN's view sees a non-empty `id` and
-        # calls resource_update instead of resource_create - which 404s,
-        # because no such resource exists yet, and the resource is never
-        # actually saved.
-        #
-        # Work around this by creating a minimal placeholder resource row
-        # here, right after the file lands on S3. By the time the user
-        # submits the form, the row already exists, so CKAN's view calls
-        # resource_update instead - which is exactly right, and folds in
-        # whatever name/format/etc. the user filled in by then.
+        # Create a placeholder resource row now, so the classic form
+        # submit later (which sees a non-empty `id`) hits resource_update
+        # instead of a 404ing resource_create.
         placeholder_data = {
             u'package_id': package_id,
             u'id': resource_id,

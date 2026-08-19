@@ -1,14 +1,11 @@
 # encoding: utf-8
 import logging
-import os
 
 import ckan.plugins as plugins
 import ckantoolkit as toolkit
-from botocore.exceptions import ClientError
 
 from ckanext.s3_multipart_upload import blueprint
 from ckanext.s3_multipart_upload import helpers as h
-from ckanext.s3_multipart_upload.uploader import MultipartUploader
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +32,14 @@ class S3MultipartUploadPlugin(plugins.SingletonPlugin):
     def get_helpers(self):
         return {'s3_multipart_upload_settings': h.s3_multipart_upload_settings}
 
-    # IResourceController
+    # IResourceController (all no-ops - see blueprint.py for why there's no
+    # tag-clearing hook here any more)
 
     def after_resource_create(self, context, resource):
-        self._confirm_upload(resource)
+        pass
 
     def after_resource_update(self, context, resource):
-        self._confirm_upload(resource)
+        pass
 
     def before_resource_create(self, context, resource):
         pass
@@ -57,35 +55,3 @@ class S3MultipartUploadPlugin(plugins.SingletonPlugin):
 
     def before_resource_show(self, resource_dict):
         pass
-
-    def _confirm_upload(self, resource):
-        """Clear the `ckan-status=pending` tag set at multipart-upload time,
-        now that a real CKAN resource row points at this key. Objects still
-        tagged pending are expired by a bucket lifecycle rule (see README) —
-        this only matters for uploads that finished but whose form was never
-        saved.
-        """
-        if resource.get('url_type') != 'upload' or not resource.get('url'):
-            return
-        if not MultipartUploader.tagging_supported:
-            # The object was never tagged in the first place (this backend
-            # doesn't support it - see start_multipart_upload's retry
-            # logic), so there's nothing to clear. Don't make an
-            # unnecessary tagging call against a backend whose tagging
-            # support is already known to be incomplete - untested/risky
-            # territory best avoided rather than probed on every upload.
-            return
-        try:
-            uploader = MultipartUploader()
-            filename = os.path.basename(resource['url'])
-            key, _munged = uploader.resource_key(resource['id'], filename)
-            uploader.get_s3_client().delete_object_tagging(
-                Bucket=uploader.bucket_name, Key=key)
-        except ClientError as e:
-            log.warning(
-                'Could not clear pending-upload tag for resource %s: %s',
-                resource.get('id'), e)
-        except Exception as e:
-            log.warning(
-                'Unexpected error clearing pending-upload tag for '
-                'resource %s: %s', resource.get('id'), e)
