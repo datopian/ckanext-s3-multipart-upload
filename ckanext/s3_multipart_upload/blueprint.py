@@ -246,6 +246,7 @@ def complete_multipart_upload(package_type, id):
         placeholder_data = {
             u'package_id': package_id,
             u'id': resource_id,
+            u'name': munged_filename,
             u'url': munged_filename,
             u'url_type': u'upload',
             u'size': size,
