@@ -184,6 +184,39 @@ def sign_part(package_type, id):
     return flask.jsonify({u'url': url})
 
 
+# Formats DataPusher+ handles by default when
+# ckan.datapusher.formats/ckanext.datapusher_plus.formats isn't set - kept
+# in sync with datapusher_plus's own plugin.py fallback list.
+_DATAPUSHER_DEFAULT_FORMATS = [
+    u'csv', u'xls', u'xlsx', u'tsv', u'ssv', u'tab', u'ods',
+    u'geojson', u'shp', u'qgis', u'zip',
+]
+
+
+def _submit_to_datapusher(resource_id, resource_format):
+    """Force a datastore refresh for this resource.
+
+    The file was written straight to S3 via presigned URLs, bypassing
+    CKAN's own uploader entirely - so CKAN's change-detection (url or
+    last_modified changing) never sees this upload happen, and DataPusher+
+    is never re-triggered on its own. Submit explicitly instead."""
+    if not resource_format:
+        return
+    supported = (
+        toolkit.config.get(u'ckan.datapusher.formats')
+        or toolkit.config.get(u'ckanext.datapusher_plus.formats')
+        or _DATAPUSHER_DEFAULT_FORMATS
+    )
+    if resource_format.lower() not in supported:
+        return
+    try:
+        toolkit.get_action(u'datapusher_submit')(
+            _get_context(), {u'resource_id': resource_id})
+    except Exception as e:
+        log.warning(
+            u'Failed to submit resource %s to DataPusher: %s', resource_id, e)
+
+
 def complete_multipart_upload(package_type, id):
     data = _get_json_body()
     resource_id = data.get(u'resource_id')
@@ -239,6 +272,8 @@ def complete_multipart_upload(package_type, id):
     except ClientError as e:
         log.warning(u'Failed to head_object after completing %s: %s', key, e)
 
+    resource_format = _guess_format(munged_filename)
+
     if mode == u'create':
         # Create a placeholder resource row now, so the classic form
         # submit later (which sees a non-empty `id`) hits resource_update
@@ -252,7 +287,6 @@ def complete_multipart_upload(package_type, id):
             u'size': size,
             u'mimetype': mimetype,
         }
-        resource_format = _guess_format(munged_filename)
         if resource_format:
             placeholder_data[u'format'] = resource_format
         try:
@@ -262,6 +296,13 @@ def complete_multipart_upload(package_type, id):
                 u'Failed to create placeholder resource %s: %s',
                 resource_id, e)
             toolkit.abort(400, toolkit._(u'Failed to save resource'))
+
+    if mode == u'update':
+        # Create mode already gets submitted via after_resource_create when
+        # the placeholder above is made. Update mode has no such hook -
+        # CKAN's own change-detection (url/last_modified) never fires here
+        # since the file went straight to S3, bypassing CKAN's uploader.
+        _submit_to_datapusher(resource_id, resource_format)
 
     return flask.jsonify(response)
 

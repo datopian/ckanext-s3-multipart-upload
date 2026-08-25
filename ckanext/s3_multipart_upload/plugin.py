@@ -39,13 +39,30 @@ class S3MultipartUploadPlugin(plugins.SingletonPlugin):
         pass
 
     def after_resource_update(self, context, resource):
-        pass
+        # Resource was cleared (no upload, no link) - purge any stale
+        # datastore table left over from the file that used to be here.
+        # CKAN doesn't do this on its own; the datastore is independent of
+        # the resource's file state.
+        if resource.get('url_type') or resource.get('url'):
+            return
+        try:
+            toolkit.get_action('datastore_delete')(
+                {'ignore_auth': True},
+                {'resource_id': resource['id'], 'force': True})
+        except Exception as e:
+            log.debug(
+                'No datastore table to clear for %s: %s', resource.get('id'), e)
 
     def before_resource_create(self, context, resource):
         pass
 
     def before_resource_update(self, context, current, resource):
-        pass
+        # Core CKAN's clear_upload handling only blanks url_type, leaving
+        # the bare old filename in url - which then gets mangled into
+        # "http://<filename>" since it's now treated as a Link. Blank url
+        # too, before the uploader class (s3filestore) ever sees it.
+        if resource.get('clear_upload') and not resource.get('upload'):
+            resource['url'] = ''
 
     def before_resource_delete(self, context, resource, resources):
         pass
