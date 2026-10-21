@@ -179,12 +179,30 @@ the lifecycle rule above already handles orphans.
 
 ## Known limitations
 
-- `size` and `mimetype` on the created resource come from an S3
-  `head_object` call made right after `CompleteMultipartUpload` (so they're
-  authoritative, not just trusted from the browser) — but only for uploads
-  that go through this widget. `last_modified` is set to the browser's
-  current time at upload-completion, same semantics as (but computed
-  independently from) the classic upload path's server-side timestamp.
+- `size` and `mimetype` come from an S3 `head_object` call (so they're
+  authoritative, not just trusted from the browser). The resource form has
+  no inputs for them, so the form save, which runs `resource_update` and
+  replaces the whole resource, would drop them. A `before_resource_update`
+  hook therefore carries them over from the current resource when the file
+  is unchanged, and reads them from S3 when the file is new or has no size.
+- `last_modified` is not persisted: the browser sends it in the
+  `resource:uploaded` event, but the form has no `last_modified` input.
+
+## Backfilling missing sizes
+
+Resources uploaded before the `before_resource_update` hook existed can
+have `size: null`. To fill them in from S3 (also fills `mimetype` when
+empty):
+
+```bash
+ckan -c /srv/app/ckan.ini s3-multipart-upload backfill-sizes --dry-run
+ckan -c /srv/app/ckan.ini s3-multipart-upload backfill-sizes
+```
+
+This writes the columns directly and reindexes the affected datasets. It
+creates no activity entries and does not resubmit resources to
+DataPusher/xloader. Resources whose S3 object is missing are listed as
+`MISSING` and left unchanged.
 - No cross-page-reload upload resume: if the page is reloaded mid-upload,
   the in-progress multipart upload is abandoned (cleaned up by the
   `AbortIncompleteMultipartUpload` lifecycle rule above) and the user must
